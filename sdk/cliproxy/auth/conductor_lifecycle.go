@@ -216,6 +216,7 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		auth.Generation++
 	}
 	cooldownStateChanged := false
+	now := time.Now()
 	if !existing.Disabled && existing.Status != StatusDisabled && !auth.Disabled && auth.Status != StatusDisabled {
 		if len(auth.ModelStates) == 0 && len(existing.ModelStates) > 0 {
 			auth.ModelStates = existing.ModelStates
@@ -228,12 +229,22 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 				auth.StatusMessage = ""
 				auth.Status = StatusActive
 			}
-			resumed := clearUnauthorizedModelStates(auth, time.Now())
+			resumed := clearUnauthorizedModelStates(auth, now)
 			if len(resumed) > 0 {
 				cooldownStateChanged = true
 			}
 		}
-		if existing.Quota.Exceeded && existing.Quota.Reason == "credential_quota" && existing.Quota.NextRecoverAt.After(time.Now()) {
+		activeCredentialQuota := existing.Quota.Exceeded && existing.Quota.Reason == "credential_quota" && existing.Quota.NextRecoverAt.After(now)
+		if activeCredentialQuota && mode == updateModeReplace && credChanged {
+			// A replacement credential must not inherit the old credential's quota or model cooldowns.
+			for _, state := range auth.ModelStates {
+				resetModelState(state, now)
+			}
+			cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
+			auth.LastError = nil
+			auth.StatusMessage = ""
+			auth.Status = StatusActive
+		} else if activeCredentialQuota {
 			auth.Unavailable = existing.Unavailable
 			auth.NextRetryAfter = existing.NextRetryAfter
 			auth.Quota = existing.Quota
@@ -242,7 +253,6 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 			}
 		}
 	}
-	now := time.Now()
 	auth.UpdatedAt = now
 	cooldownStateChanged = normalizeModelStates(auth) || cooldownStateChanged
 	if m.cooldownDisabledForAuth(auth) || auth.Disabled || auth.Status == StatusDisabled {

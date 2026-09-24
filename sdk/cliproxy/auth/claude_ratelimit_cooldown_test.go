@@ -115,12 +115,12 @@ func TestAuthManager_UpdatePreservesActiveCredentialCooldown(t *testing.T) {
 		Error:           &Error{HTTPStatus: http.StatusTooManyRequests, Message: "7d limit rejected"},
 	})
 
-	// Reload/update auth (e.g. config reload or token refresh)
+	// Reload/update auth without replacing the exhausted credential.
 	updatedAuth := &Auth{
 		ID:       auth.ID,
 		Provider: "claude",
 		Attributes: map[string]string{
-			"api_key": "test-key-updated",
+			"api_key": "test-key",
 		},
 	}
 	if _, err := manager.Update(context.Background(), updatedAuth); err != nil {
