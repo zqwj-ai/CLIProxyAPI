@@ -78,6 +78,44 @@ func TestWriteClaudeErrorResponseUsesClaudeEnvelope(t *testing.T) {
 	}
 }
 
+func TestWriteClaudeErrorResponseKeepsUpstreamErrorDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	handler := &ClaudeCodeAPIHandler{}
+	msg := &interfaces.ErrorMessage{
+		StatusCode: http.StatusNotFound,
+		Error:      errors.New(`{"type":"error","error":{"type":"not_found_error","message":"No thread state was found for the requested previous_message_id.","details":{"error_code":"thread_not_found"}},"request_id":"req_123"}`),
+	}
+
+	handler.WriteErrorResponse(c, msg)
+
+	body := recorder.Body.Bytes()
+	if got := gjson.GetBytes(body, "error.details.error_code").String(); got != "thread_not_found" {
+		t.Fatalf("error.details.error_code = %q, want thread_not_found; body=%s", got, body)
+	}
+	if got := gjson.GetBytes(body, "error.type").String(); got != "not_found_error" {
+		t.Fatalf("error.type = %q, want not_found_error; body=%s", got, body)
+	}
+}
+
+func TestWriteClaudeErrorResponseOmitsAbsentDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	handler := &ClaudeCodeAPIHandler{}
+	msg := &interfaces.ErrorMessage{
+		StatusCode: http.StatusTooManyRequests,
+		Error:      errors.New(`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`),
+	}
+
+	handler.WriteErrorResponse(c, msg)
+
+	if gjson.GetBytes(recorder.Body.Bytes(), "error.details").Exists() {
+		t.Fatalf("unexpected error.details; body=%s", recorder.Body.Bytes())
+	}
+}
+
 func TestWriteClaudeErrorResponse_IncludesRetryAfterForModelCooldownDefaultSettings(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
