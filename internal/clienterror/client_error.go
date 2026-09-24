@@ -100,7 +100,7 @@ func IsRequestFault(status int, err error) bool {
 	if hasRequestFaultBody(err) {
 		return true
 	}
-	if err != nil && IsItemNotPersisted(err.Error()) {
+	if err != nil && (IsItemNotPersisted(err.Error()) || IsThreadNotFound(err.Error())) {
 		return true
 	}
 	switch status {
@@ -127,6 +127,14 @@ func IsItemNotPersisted(message string) bool {
 	return strings.Contains(lower, "item with id") &&
 		strings.Contains(lower, "not found") &&
 		strings.Contains(lower, "items are not persisted when `store` is set to false")
+}
+
+// IsThreadNotFound matches the Claude 404 raised when a request continues a server-side
+// Thread (`thread.previous_message_id`) whose state the upstream no longer holds. The
+// client recovers by replaying the conversation with `thread: {"type": "create"}`, so the
+// error must reach it instead of cooling down the (credential, model) pair.
+func IsThreadNotFound(message string) bool {
+	return strings.Contains(message, `"thread_not_found"`)
 }
 
 func hasModelNotFoundErrorBody(err error) bool {
