@@ -205,7 +205,7 @@ func (m *Manager) executeWarmup(ctx context.Context, auth *Auth) error {
 	}
 	model, payload, format := "gpt-6-luna", `{"model":"gpt-6-luna","input":"Hi","max_output_tokens":16}`, translator.FromString("openai-response")
 	if auth.Provider == "claude" {
-		model, payload, format = "claude-haiku-4-5", `{"model":"claude-haiku-4-5","max_tokens":1,"messages":[{"role":"user","content":"probe"}]}`, translator.FromString("claude")
+		model, payload, format = "claude-haiku-4-5-20251001", `{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"probe"}]}`, translator.FromString("claude")
 	}
 	if rt := m.roundTripperFor(auth); rt != nil {
 		ctx = context.WithValue(ctx, roundTripperContextKey{}, rt)
@@ -239,12 +239,8 @@ func (m *Manager) recordWarmupStatus(auth *Auth, result string, usage quotaWarmu
 		marker = auth.ID
 	}
 	digest := sha256.Sum256([]byte(filepath.Base(marker)))
-	log.WithFields(log.Fields{
-		"credential": fmt.Sprintf("%x", digest[:4]),
-		"provider":   auth.Provider,
-		"result":     result,
-		"window":     usage.Window,
-		"used_pct":   usage.Utilization,
-		"reset_at":   usage.ResetAt,
-	}).Info("quota warmup")
+	// The production LogFormatter prints only an allowlist of structured fields.
+	// Put safe result/usage values in the message so operators can verify the loop.
+	log.Infof("quota warmup result=%s window=%s used_pct=%.2f reset_at=%d provider=%s credential=%x",
+		result, usage.Window, usage.Utilization, usage.ResetAt, auth.Provider, digest[:4])
 }
