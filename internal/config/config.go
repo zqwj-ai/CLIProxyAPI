@@ -99,6 +99,9 @@ type Config struct {
 	// QuotaExceeded defines the behavior when a quota is exceeded.
 	QuotaExceeded QuotaExceeded `yaml:"quota-exceeded" json:"quota-exceeded"`
 
+	// QuotaWarmup starts idle Codex and Claude quota windows with a tiny request.
+	QuotaWarmup QuotaWarmupConfig `yaml:"quota-warmup" json:"quota-warmup"`
+
 	// Routing controls credential selection behavior.
 	Routing RoutingConfig `yaml:"routing" json:"routing"`
 

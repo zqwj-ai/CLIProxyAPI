@@ -334,6 +334,36 @@ type RemoteManagement struct {
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
 }
 
+// QuotaWarmupConfig controls the background quota-window warmup loop.
+// Nil switches mean enabled, including when quota-warmup is omitted entirely.
+type QuotaWarmupConfig struct {
+	Enabled         *bool `yaml:"enabled" json:"enabled"`
+	IntervalMinutes int   `yaml:"interval-minutes" json:"interval-minutes"`
+	Codex           *bool `yaml:"codex" json:"codex"`
+	Claude          *bool `yaml:"claude" json:"claude"`
+}
+
+func (c QuotaWarmupConfig) IsEnabled(provider string) bool {
+	if c.Enabled != nil && !*c.Enabled {
+		return false
+	}
+	switch provider {
+	case "codex":
+		return c.Codex == nil || *c.Codex
+	case "claude":
+		return c.Claude == nil || *c.Claude
+	default:
+		return false
+	}
+}
+
+func (c QuotaWarmupConfig) ScanIntervalMinutes() int {
+	if c.IntervalMinutes <= 0 {
+		return 30
+	}
+	return c.IntervalMinutes
+}
+
 // QuotaExceeded defines the behavior when API quota limits are exceeded.
 // It provides configuration options for automatic failover mechanisms.
 type QuotaExceeded struct {
