@@ -173,7 +173,7 @@ func TestClaudeQuotaWarmupUsesHaiku(t *testing.T) {
 	m.RegisterExecutor(e)
 	registerWarmupAuth(t, m, "claude-auth", "claude")
 	m.scanQuotaWarmup(context.Background())
-	if e.attempts != 1 || e.probes != 2 || e.models[0] != "claude-haiku-4-5" || !strings.Contains(e.payloads[0], `"max_tokens":1`) {
+	if e.attempts != 1 || e.probes != 2 || e.models[0] != "claude-haiku-4-5-20251001" || !strings.Contains(e.payloads[0], `"max_tokens":1`) {
 		t.Fatalf("attempts=%d probes=%d models=%v", e.attempts, e.probes, e.models)
 	}
 }
