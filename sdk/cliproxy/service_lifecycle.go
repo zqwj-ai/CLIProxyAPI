@@ -123,8 +123,15 @@ func (s *Service) Run(ctx context.Context) error {
 		redisqueue.SetEnabled(true)
 	}
 
+	// Gate inference requests while the initial watcher scan registers credentials and models.
+	var startupGate *startupReadiness
+	serverOptions := s.serverOptions
+	if !homeEnabled {
+		startupGate = &startupReadiness{}
+		serverOptions = append(append([]api.ServerOption(nil), serverOptions...), api.WithMiddleware(startupGate.middleware))
+	}
 	// handlers no longer depend on legacy clients; pass nil slice initially
-	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, s.serverOptions...)
+	s.server = api.NewServer(s.cfg, s.coreManager, s.accessManager, s.configPath, serverOptions...)
 	s.syncPluginRuntimeConfig(ctx)
 	if homeEnabled {
 		s.syncPluginModelRuntime(ctx)
@@ -162,6 +169,9 @@ func (s *Service) Run(ctx context.Context) error {
 		s.hooks.OnBeforeStart(s.cfg)
 	}
 
+	if startupGate != nil {
+		go startupGate.wait(ctx, registry.GetGlobalRegistry(), startupReadinessTimeout)
+	}
 	s.serverErr = make(chan error, 1)
 	go func() {
 		if errStart := s.server.Start(); errStart != nil {
@@ -204,6 +214,8 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		log.Info("file watcher started for config and auth directory changes")
 		s.syncPluginModelRuntime(ctx)
+		initialAuths := append(s.coreManager.List(), watcherWrapper.SnapshotAuths()...)
+		startupGate.setInitialAuths(initialAuths)
 	}
 
 	s.registerModelRefreshCallback()
