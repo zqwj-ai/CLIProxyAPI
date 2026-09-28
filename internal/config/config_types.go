@@ -337,10 +337,13 @@ type RemoteManagement struct {
 // QuotaWarmupConfig controls the background quota-window warmup loop.
 // Nil switches mean enabled, including when quota-warmup is omitted entirely.
 type QuotaWarmupConfig struct {
-	Enabled         *bool `yaml:"enabled" json:"enabled"`
-	IntervalMinutes int   `yaml:"interval-minutes" json:"interval-minutes"`
-	Codex           *bool `yaml:"codex" json:"codex"`
-	Claude          *bool `yaml:"claude" json:"claude"`
+	Enabled             *bool `yaml:"enabled" json:"enabled"`
+	IntervalMinutes     int   `yaml:"interval-minutes" json:"interval-minutes"`
+	RetryBackoffMinutes int   `yaml:"retry-backoff-minutes" json:"retry-backoff-minutes"`
+	CodexDailyCap       int   `yaml:"codex-daily-cap" json:"codex-daily-cap"`
+	ClaudeDailyCap      int   `yaml:"claude-daily-cap" json:"claude-daily-cap"`
+	Codex               *bool `yaml:"codex" json:"codex"`
+	Claude              *bool `yaml:"claude" json:"claude"`
 }
 
 func (c QuotaWarmupConfig) IsEnabled(provider string) bool {
@@ -362,6 +365,26 @@ func (c QuotaWarmupConfig) ScanIntervalMinutes() int {
 		return 30
 	}
 	return c.IntervalMinutes
+}
+
+func (c QuotaWarmupConfig) BackoffMinutes() int {
+	if c.RetryBackoffMinutes <= 0 {
+		return 360
+	}
+	return c.RetryBackoffMinutes
+}
+
+func (c QuotaWarmupConfig) DailyCap(provider string) int {
+	if provider == "claude" {
+		if c.ClaudeDailyCap > 0 {
+			return c.ClaudeDailyCap
+		}
+		return 6
+	}
+	if c.CodexDailyCap > 0 {
+		return c.CodexDailyCap
+	}
+	return 2
 }
 
 // QuotaExceeded defines the behavior when API quota limits are exceeded.

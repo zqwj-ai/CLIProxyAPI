@@ -194,8 +194,10 @@ type Manager struct {
 	refreshLoop   *authAutoRefreshLoop
 
 	// Quota warmup is observation-only and never shares the routing cooldown state.
-	warmupCancel context.CancelFunc
-	warmupStatus map[string]QuotaWarmupStatus
+	warmupCancel   context.CancelFunc
+	warmupStatus   map[string]QuotaWarmupStatus
+	warmupAttempts map[string][]time.Time
+	warmupInFlight map[string]bool
 
 	requestPrepareLocks sync.Map
 	// refreshLocks serializes credential refresh per auth ID so concurrent
