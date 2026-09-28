@@ -167,6 +167,87 @@ func TestQuotaWarmupFailureDoesNotChangeRoutingState(t *testing.T) {
 	}
 }
 
+func TestQuotaWarmupFailedConfirmationBackoffAndDailyCap(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	m.SetConfig(&config.Config{QuotaWarmup: config.QuotaWarmupConfig{RetryBackoffMinutes: 60, CodexDailyCap: 2}})
+	e := &warmupTestExecutor{provider: "codex", usage: []string{idleCodexUsage}}
+	m.RegisterExecutor(e)
+	a := registerWarmupAuth(t, m, "failed-confirmation", "codex")
+
+	m.scanQuotaWarmup(context.Background())
+	if e.attempts != 1 || e.probes != 2 {
+		t.Fatalf("first scan: attempts=%d probes=%d", e.attempts, e.probes)
+	}
+	m.scanQuotaWarmup(context.Background())
+	status, _ := m.WarmupStatus(a.ID)
+	if e.attempts != 1 || e.probes != 3 || status.CheckResult != "backoff" || status.LastAttemptResult != "confirmation_failed" {
+		t.Fatalf("backoff: attempts=%d probes=%d status=%+v", e.attempts, e.probes, status)
+	}
+	m.mu.Lock()
+	status = m.warmupStatus[a.ID]
+	status.LastAttemptAt = time.Now().Add(-61 * time.Minute)
+	m.warmupStatus[a.ID] = status
+	m.mu.Unlock()
+	m.scanQuotaWarmup(context.Background())
+	status, _ = m.WarmupStatus(a.ID)
+	if e.attempts != 2 || e.probes != 5 || status.CheckResult != "confirmation_failed" {
+		t.Fatalf("retry: attempts=%d probes=%d status=%+v", e.attempts, e.probes, status)
+	}
+	m.scanQuotaWarmup(context.Background())
+	status, _ = m.WarmupStatus(a.ID)
+	if e.attempts != 2 || e.probes != 6 || status.CheckResult != "daily_cap_reached" {
+		t.Fatalf("daily cap: attempts=%d probes=%d status=%+v", e.attempts, e.probes, status)
+	}
+	// A rolling cap expires without changing the routing state or sleeping.
+	m.mu.Lock()
+	m.warmupAttempts[a.ID][0] = time.Now().Add(-25 * time.Hour)
+	m.warmupAttempts[a.ID][1] = time.Now().Add(-25 * time.Hour)
+	status = m.warmupStatus[a.ID]
+	status.LastAttemptAt = time.Now().Add(-61 * time.Minute)
+	m.warmupStatus[a.ID] = status
+	m.mu.Unlock()
+	m.scanQuotaWarmup(context.Background())
+	if e.attempts != 3 {
+		t.Fatalf("rolling cap did not expire: attempts=%d", e.attempts)
+	}
+}
+
+func TestQuotaWarmupWarmedWindowResetsWithinCap(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	e := &warmupTestExecutor{provider: "claude", usage: []string{
+		`{"five_hour":{"utilization":0,"resets_at":null}}`,
+		`{"five_hour":{"utilization":0,"resets_at":"2026-09-29T00:00:00Z"}}`,
+		`{"five_hour":{"utilization":0,"resets_at":null}}`,
+		`{"five_hour":{"utilization":0,"resets_at":"2026-09-29T05:00:00Z"}}`,
+	}}
+	m.RegisterExecutor(e)
+	a := registerWarmupAuth(t, m, "reset-claude", "claude")
+	m.scanQuotaWarmup(context.Background())
+	m.scanQuotaWarmup(context.Background())
+	status, _ := m.WarmupStatus(a.ID)
+	if e.attempts != 2 || e.probes != 4 || status.CheckResult != "warmed" || len(m.warmupAttempts[a.ID]) != 2 {
+		t.Fatalf("reset: attempts=%d probes=%d status=%+v", e.attempts, e.probes, status)
+	}
+}
+
+func TestQuotaWarmupSuccessCountsTowardCap(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	m.SetConfig(&config.Config{QuotaWarmup: config.QuotaWarmupConfig{ClaudeDailyCap: 1}})
+	e := &warmupTestExecutor{provider: "claude", usage: []string{
+		`{"five_hour":{"utilization":0,"resets_at":null}}`,
+		`{"five_hour":{"utilization":0,"resets_at":"2026-09-29T00:00:00Z"}}`,
+		`{"five_hour":{"utilization":0,"resets_at":null}}`,
+	}}
+	m.RegisterExecutor(e)
+	a := registerWarmupAuth(t, m, "cap-claude", "claude")
+	m.scanQuotaWarmup(context.Background())
+	m.scanQuotaWarmup(context.Background())
+	status, _ := m.WarmupStatus(a.ID)
+	if e.attempts != 1 || e.probes != 3 || status.CheckResult != "daily_cap_reached" || status.LastAttemptResult != "warmed" {
+		t.Fatalf("success cap: attempts=%d probes=%d status=%+v", e.attempts, e.probes, status)
+	}
+}
+
 func TestClaudeQuotaWarmupUsesHaiku(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	e := &warmupTestExecutor{provider: "claude", usage: []string{`{"five_hour":{"utilization":0,"resets_at":null}}`, `{"five_hour":{"utilization":0,"resets_at":"2026-09-29T00:00:00Z"}}`}}

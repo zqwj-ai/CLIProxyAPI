@@ -244,9 +244,12 @@ video-result-auth-cache-ttl: "3h"
 # Codex or Claude window has not started counting down. Failures never change routing.
 quota-warmup:
   enabled: true          # Set false to stop all probes and warmup requests.
-  interval-minutes: 30   # Defaults to 30 when omitted or non-positive.
-  codex: true            # Set false to disable only Codex warmup.
-  claude: true           # Set false to disable only Claude warmup (runs 24h/day).
+  interval-minutes: 30        # Defaults to 30 when omitted or non-positive.
+  retry-backoff-minutes: 360  # Wait after a failed attempt; usage probes still run.
+  codex-daily-cap: 2          # Maximum requests per credential in rolling 24h (including successes).
+  claude-daily-cap: 6         # Maximum requests per credential in rolling 24h (including successes).
+  codex: true                 # Set false to disable only Codex warmup.
+  claude: true                # Set false to disable only Claude warmup (runs 24h/day).
 
 # Quota exceeded behavior
 quota-exceeded:

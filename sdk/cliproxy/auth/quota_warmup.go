@@ -153,6 +153,17 @@ func (m *Manager) warmupAuth(ctx context.Context, auth *Auth) {
 	if !ok || !quotaWarmupEligible(current, time.Now()) || (cfg != nil && !cfg.QuotaWarmup.IsEnabled(current.Provider)) {
 		return
 	}
+	warmupCfg := config.QuotaWarmupConfig{}
+	if cfg != nil {
+		warmupCfg = cfg.QuotaWarmup
+	}
+	if blocked := m.reserveWarmupAttempt(current, warmupCfg, time.Now()); blocked != "" {
+		if blocked != "in_flight" {
+			m.recordWarmupStatus(current, blocked, usage, false)
+		}
+		return
+	}
+	defer m.finishWarmupAttempt(current.ID)
 	if err = m.executeWarmup(ctx, current); err != nil {
 		m.recordWarmupStatus(current, "warmup_failed", usage, true)
 		return
@@ -163,6 +174,45 @@ func (m *Manager) warmupAuth(ctx context.Context, auth *Auth) {
 		return
 	}
 	m.recordWarmupStatus(current, "warmed", verified, true)
+}
+
+// Attempt history is process-local. After a restart the backoff and rolling cap
+// reset, so at most one extra attempt may be sent before the new backoff applies.
+func (m *Manager) reserveWarmupAttempt(auth *Auth, cfg config.QuotaWarmupConfig, now time.Time) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.warmupInFlight[auth.ID] {
+		return "in_flight"
+	}
+	attempts := m.warmupAttempts[auth.ID]
+	remaining := attempts[:0]
+	for _, at := range attempts {
+		if now.Sub(at) < 24*time.Hour {
+			remaining = append(remaining, at)
+		}
+	}
+	if len(remaining) >= cfg.DailyCap(auth.Provider) {
+		return "daily_cap_reached"
+	}
+	status := m.warmupStatus[auth.ID]
+	if !status.LastAttemptAt.IsZero() && status.LastAttemptResult != "warmed" && now.Sub(status.LastAttemptAt) < time.Duration(cfg.BackoffMinutes())*time.Minute {
+		return "backoff"
+	}
+	if m.warmupAttempts == nil {
+		m.warmupAttempts = make(map[string][]time.Time)
+	}
+	if m.warmupInFlight == nil {
+		m.warmupInFlight = make(map[string]bool)
+	}
+	m.warmupAttempts[auth.ID] = append(remaining, now)
+	m.warmupInFlight[auth.ID] = true
+	return ""
+}
+
+func (m *Manager) finishWarmupAttempt(id string) {
+	m.mu.Lock()
+	delete(m.warmupInFlight, id)
+	m.mu.Unlock()
 }
 
 func (m *Manager) probeWarmupUsage(ctx context.Context, auth *Auth) (quotaWarmupUsage, error) {
@@ -241,6 +291,11 @@ func (m *Manager) recordWarmupStatus(auth *Auth, result string, usage quotaWarmu
 	digest := sha256.Sum256([]byte(filepath.Base(marker)))
 	// The production LogFormatter prints only an allowlist of structured fields.
 	// Put safe result/usage values in the message so operators can verify the loop.
+	if result == "daily_cap_reached" {
+		log.Warnf("quota warmup result=%s window=%s used_pct=%.2f reset_at=%d provider=%s credential=%x",
+			result, usage.Window, usage.Utilization, usage.ResetAt, auth.Provider, digest[:4])
+		return
+	}
 	log.Infof("quota warmup result=%s window=%s used_pct=%.2f reset_at=%d provider=%s credential=%x",
 		result, usage.Window, usage.Utilization, usage.ResetAt, auth.Provider, digest[:4])
 }
