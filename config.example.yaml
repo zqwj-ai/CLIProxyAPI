@@ -239,6 +239,15 @@ video-result-auth-cache-ttl: "3h"
 # When > 0, overrides the default worker count (16).
 # auth-auto-refresh-workers: 16
 
+# Idle quota-window warmup (default enabled): probe read-only usage every 30 minutes,
+# then send one tiny request through the credential's provider executor only when a
+# Codex or Claude window has not started counting down. Failures never change routing.
+quota-warmup:
+  enabled: true          # Set false to stop all probes and warmup requests.
+  interval-minutes: 30   # Defaults to 30 when omitted or non-positive.
+  codex: true            # Set false to disable only Codex warmup.
+  claude: true           # Set false to disable only Claude warmup (runs 24h/day).
+
 # Quota exceeded behavior
 quota-exceeded:
   switch-project: true # Whether to automatically switch to another project when a quota is exceeded
