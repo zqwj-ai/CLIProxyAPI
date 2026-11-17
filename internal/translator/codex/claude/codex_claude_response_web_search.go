@@ -131,25 +131,39 @@ func codexWebSearchResultContent(root, item gjson.Result) []byte {
 	if !results.IsArray() {
 		results = root.Get("results")
 	}
-	if !results.IsArray() {
+	sources := item.Get("action.sources")
+	if !sources.IsArray() {
+		sources = root.Get("action.sources")
+	}
+	if !results.IsArray() && !sources.IsArray() {
 		return nil
 	}
 	var resultBlocks [][]byte
-	results.ForEach(func(_, result gjson.Result) bool {
-		url := strings.TrimSpace(result.Get("url").String())
-		if url == "" {
+	seenURLs := make(map[string]struct{})
+	for _, entries := range []gjson.Result{results, sources} {
+		if !entries.IsArray() {
+			continue
+		}
+		entries.ForEach(func(_, result gjson.Result) bool {
+			url := strings.TrimSpace(result.Get("url").String())
+			if url == "" {
+				return true
+			}
+			if _, seen := seenURLs[url]; seen {
+				return true
+			}
+			seenURLs[url] = struct{}{}
+			block := []byte(`{"type":"web_search_result","title":"","url":"","page_age":null}`)
+			block, _ = sjson.SetBytes(block, "url", url)
+			title := strings.TrimSpace(result.Get("title").String())
+			if title == "" {
+				title = url
+			}
+			block, _ = sjson.SetBytes(block, "title", title)
+			resultBlocks = append(resultBlocks, block)
 			return true
-		}
-		block := []byte(`{"type":"web_search_result","title":"","url":"","page_age":null}`)
-		block, _ = sjson.SetBytes(block, "url", url)
-		title := strings.TrimSpace(result.Get("title").String())
-		if title == "" {
-			title = url
-		}
-		block, _ = sjson.SetBytes(block, "title", title)
-		resultBlocks = append(resultBlocks, block)
-		return true
-	})
+		})
+	}
 	if len(resultBlocks) == 0 {
 		return []byte(`[]`)
 	}
