@@ -340,8 +340,12 @@ func convertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool, 
 	// Convert tools declarations to the expected format for the Codex API.
 	toolsResult := rootResult.Get("tools")
 	var toolItems [][]byte
+	include := []string{"reasoning.encrypted_content"}
 	if toolsResult.IsArray() {
 		webSearchToolNames := buildClaudeWebSearchToolNameSet(toolsResult)
+		if len(webSearchToolNames) > 0 {
+			include = append(include, "web_search_call.action.sources")
+		}
 		template, _ = sjson.SetRawBytes(template, "tool_choice", convertClaudeToolChoiceToCodex(rootResult.Get("tool_choice"), toolNameMap, webSearchToolNames))
 		toolResults := toolsResult.Array()
 		toolItems = make([][]byte, 0, len(toolResults))
@@ -433,7 +437,7 @@ func convertClaudeRequestToCodex(modelName string, inputRawJSON []byte, _ bool, 
 	}
 	template, _ = sjson.SetBytes(template, "stream", true)
 	template, _ = sjson.SetBytes(template, "store", false)
-	template, _ = sjson.SetBytes(template, "include", []string{"reasoning.encrypted_content"})
+	template, _ = sjson.SetBytes(template, "include", include)
 
 	// Map Claude output_config.format to Codex Responses text.format.
 	if format := rootResult.Get("output_config.format"); format.IsObject() && format.Get("type").String() == "json_schema" && format.Get("schema").IsObject() {
