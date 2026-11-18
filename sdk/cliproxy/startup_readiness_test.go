@@ -11,7 +11,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/claude"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 )
 
 func TestStartupReadinessMiddleware(t *testing.T) {
@@ -82,8 +85,67 @@ func TestStartupReadinessWaitsForInitialRegistrations(t *testing.T) {
 	}
 }
 
+func TestStartupReadinessWaitsForRemoteOnlyModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	models := registry.GetGlobalRegistry()
+	const authID = "startup-remote-model-auth"
+	const remoteModel = "startup-remote-only-codex-model"
+	t.Cleanup(func() { models.UnregisterClient(authID) })
+
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(&syncTestExecutor{})
+	auth := &coreauth.Auth{
+		ID: authID, Provider: "codex", Status: coreauth.StatusActive,
+		Metadata: map[string]any{"access_token": `{"id":"msg-startup-ready","type":"message","content":[]}`},
+	}
+	if _, err := manager.Register(context.Background(), auth); err != nil {
+		t.Fatal(err)
+	}
+	models.RegisterClient(authID, "codex", []*registry.ModelInfo{{ID: "startup-embedded-model"}})
+	refreshDone := make(chan struct{})
+	gate := &startupReadiness{modelsRefreshDone: refreshDone}
+	gate.setInitialAuths([]*coreauth.Auth{auth})
+	if gate.registrationsComplete(models) {
+		t.Fatal("ready with embedded registrations while startup refresh is pending")
+	}
+
+	router := gin.New()
+	router.Use(gate.middleware)
+	handler := claude.NewClaudeCodeAPIHandler(handlers.NewBaseAPIHandlers(&config.SDKConfig{}, manager))
+	router.POST("/v1/messages", handler.ClaudeMessages)
+	request := func(model string) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		body := `{"model":"` + model + `","max_tokens":1,"messages":[{"role":"user","content":"test"}]}`
+		router.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body)))
+		return w
+	}
+	if w := request(remoteModel); w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "2" {
+		t.Fatalf("remote-only model before refresh = %d, retry-after=%q, body=%s", w.Code, w.Header().Get("Retry-After"), w.Body.String())
+	}
+
+	// Model registrations are rebuilt synchronously before refresh completion is published.
+	models.RegisterClient(authID, "codex", []*registry.ModelInfo{{ID: "startup-embedded-model"}, {ID: remoteModel}})
+	manager.RefreshSchedulerEntry(authID)
+	if gate.registrationsComplete(models) {
+		t.Fatal("ready before startup refresh callback completed")
+	}
+	close(refreshDone)
+	// A zero timeout also proves the success path runs before timeout fallback.
+	gate.wait(context.Background(), models, 0)
+	if !gate.registrationsComplete(models) || !gate.ready.Load() {
+		t.Fatal("not ready after startup remote model registration completed")
+	}
+	if w := request(remoteModel); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "msg-startup-ready") {
+		t.Fatalf("remote-only model after refresh = %d, body=%s", w.Code, w.Body.String())
+	}
+	if w := request("startup-truly-unknown-model"); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "unknown provider") {
+		t.Fatalf("unknown model after refresh = %d, body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestStartupReadinessTimeoutFailsOpen(t *testing.T) {
-	gate := &startupReadiness{}
+	gate := &startupReadiness{modelsRefreshDone: make(chan struct{})}
 	gate.wait(context.Background(), registry.GetGlobalRegistry(), time.Nanosecond)
 	if !gate.ready.Load() {
 		t.Fatal("timeout left inference unavailable")

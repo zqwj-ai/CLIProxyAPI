@@ -127,7 +127,7 @@ func (s *Service) Run(ctx context.Context) error {
 	var startupGate *startupReadiness
 	serverOptions := s.serverOptions
 	if !homeEnabled {
-		startupGate = &startupReadiness{}
+		startupGate = &startupReadiness{modelsRefreshDone: registry.StartupModelsRefreshDone()}
 		serverOptions = append(append([]api.ServerOption(nil), serverOptions...), api.WithMiddleware(startupGate.middleware))
 	}
 	// handlers no longer depend on legacy clients; pass nil slice initially
@@ -191,6 +191,7 @@ func (s *Service) Run(ctx context.Context) error {
 		s.hooks.OnAfterStart(s)
 	}
 
+	var initialAuths []*coreauth.Auth
 	if !homeEnabled {
 		var watcherWrapper *WatcherWrapper
 		reloadCallback := func(newCfg *config.Config) { s.applyWatcherConfigUpdate(newCfg) }
@@ -214,11 +215,15 @@ func (s *Service) Run(ctx context.Context) error {
 		}
 		log.Info("file watcher started for config and auth directory changes")
 		s.syncPluginModelRuntime(ctx)
-		initialAuths := append(s.coreManager.List(), watcherWrapper.SnapshotAuths()...)
-		startupGate.setInitialAuths(initialAuths)
+		initialAuths = append(s.coreManager.List(), watcherWrapper.SnapshotAuths()...)
 	}
 
 	s.registerModelRefreshCallback()
+	if startupGate != nil {
+		// Apply any catalog changes queued before callback registration before
+		// publishing the initial scan to the readiness waiter.
+		startupGate.setInitialAuths(initialAuths)
+	}
 
 	select {
 	case <-ctx.Done():
