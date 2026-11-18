@@ -37,6 +37,21 @@ var modelsCatalogStore = &modelStore{}
 
 var updaterOnce sync.Once
 
+var (
+	startupRefreshMu   sync.RWMutex
+	startupRefreshDone chan struct{}
+)
+
+// StartupModelsRefreshDone signals that the initial remote fetch and any already
+// registered callback have finished, including fallback after fetch failure.
+// Queued changes are applied synchronously by SetModelRefreshCallback. A nil
+// channel means remote updates were not started (for example, local-model mode).
+func StartupModelsRefreshDone() <-chan struct{} {
+	startupRefreshMu.RLock()
+	defer startupRefreshMu.RUnlock()
+	return startupRefreshDone
+}
+
 // ModelRefreshCallback is invoked when startup or periodic model refresh detects changes.
 // changedProviders contains the provider names whose model definitions changed.
 type ModelRefreshCallback func(changedProviders []string)
@@ -77,12 +92,17 @@ func init() {
 // Safe to call multiple times; only one updater will run.
 func StartModelsUpdater(ctx context.Context) {
 	updaterOnce.Do(func() {
-		go runModelsUpdater(ctx)
+		done := make(chan struct{})
+		startupRefreshMu.Lock()
+		startupRefreshDone = done
+		startupRefreshMu.Unlock()
+		go runModelsUpdater(ctx, done)
 	})
 }
 
-func runModelsUpdater(ctx context.Context) {
+func runModelsUpdater(ctx context.Context, startupDone chan<- struct{}) {
 	tryStartupRefresh(ctx)
+	close(startupDone)
 	periodicRefresh(ctx)
 }
 

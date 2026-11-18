@@ -16,9 +16,10 @@ import (
 const startupReadinessTimeout = 60 * time.Second
 
 type startupReadiness struct {
-	ready   atomic.Bool
-	scanned atomic.Bool
-	authIDs []string // Published before scanned is set.
+	ready             atomic.Bool
+	scanned           atomic.Bool
+	authIDs           []string // Published before scanned is set.
+	modelsRefreshDone <-chan struct{}
 }
 
 func (r *startupReadiness) setInitialAuths(auths []*coreauth.Auth) {
@@ -39,6 +40,13 @@ func (r *startupReadiness) registrationsComplete(models *registry.ModelRegistry)
 	if !r.scanned.Load() || len(r.authIDs) == 0 {
 		return false
 	}
+	if r.modelsRefreshDone != nil {
+		select {
+		case <-r.modelsRefreshDone:
+		default:
+			return false
+		}
+	}
 	for _, id := range r.authIDs {
 		if len(models.GetModelsForClient(id)) == 0 {
 			return false
@@ -55,7 +63,7 @@ func (r *startupReadiness) wait(ctx context.Context, models *registry.ModelRegis
 	for {
 		if r.registrationsComplete(models) {
 			r.ready.Store(true)
-			log.Info("startup ready: initial credentials and models registered")
+			log.Info("startup ready: initial credentials and models registered; startup model refresh settled")
 			return
 		}
 		select {
